@@ -1,6 +1,4 @@
-###########################
 # PACKAGE INSTALLATION
-###########################
 # Define a utility function to install packages if missing
 install_if_missing <- function(packages) {
   for (pkg in packages) {
@@ -23,6 +21,30 @@ required_packages <- c(
 # Check and install required packages
 install_if_missing(required_packages)
 message("All required packages are installed and loaded successfully!")
+
+# Now load all required libraries
+library(shiny)
+library(readxl)
+library(dplyr)
+library(DT)
+library(FactoMineR)
+library(factoextra)
+library(colourpicker)
+library(ggplot2)
+library(corrplot)
+library(plotly)
+library(grid)
+library(gridExtra)
+library(reshape2)
+library(cluster)
+library(heatmaply)
+library(dendextend)
+library(viridis)
+library(RColorBrewer)
+library(apcluster)
+library(dbscan)
+library(kernlab)
+library(writexl)
 
 ###########################
 # UI DEFINITION
@@ -68,20 +90,21 @@ ui <- navbarPage("Data Analysis App",
                             h3("Guide to Using the App"),
                             h4("1. Data Upload and Dataset Setup"),
                             p("Upload your dataset via the 'New Dataset' tab. Select the appropriate ID and grouping columns, choose the variables you want to work with, and optionally apply the outlier test to exclude anomalous data points."),
+                            p("Remember: Click [Load File](https://en.wikipedia.org/wiki/File) to load your file, and click [Generate Database](https://en.wikipedia.org/wiki/Database) every time you change the database."),
                             h4("2. PCA Analysis"),
-                            p("In the 'PCA' tab, select the numeric variables to include in the analysis and choose which principal components to plot on the X and Y axes. The PCA and loadings plots will display using the same IDs as in the new dataset to ensure consistency."),
+                            p("In the 'PCA' tab, select the numeric variables for analysis and choose which principal components to plot on the X and Y axes. You can now also select group colors in a separate sub tab and optionally enable hover tooltips to see group information when hovering over a marker."),
                             h4("3. Violin Plot (with Box Plot)"),
-                            p("Use the 'Violin Plot' tab to visualize the distribution of a selected numeric variable across groups. Adjust the transparency and overlay a box plot to emphasize medians and quartile ranges, along with individual data points."),
+                            p("Use the 'Violin Plot' tab to visualize the distribution of a selected numeric variable across groups. Adjust transparency, overlay a box plot, and optionally transform the data using logarithmic or exponential scaling. [Logarithmic scaling](https://en.wikipedia.org/wiki/Logarithm) is ideal when your data spans several orders of magnitude, while [exponential scaling](https://en.wikipedia.org/wiki/Exponential_function) highlights growth patterns."),
                             h4("4. K-means Clustering"),
-                            p("In the 'K-means Clustering' tab, select the variables to use for clustering. The app allows you to choose from various distance metrics:"),
+                            p("In the 'K-means Clustering' tab, select the variables for clustering. The app lets you choose from various distance metrics:"),
                             tags$ul(
                               tags$li(
                                 strong("Euclidean:"),
-                                " Ideal when variables are on the same scale and typically used by default."
+                                " Ideal when variables are on the same scale."
                               ),
                               tags$li(
                                 strong("Manhattan:"),
-                                " Useful when differences are measured in absolute terms."
+                                " Useful for absolute differences."
                               ),
                               tags$li(
                                 strong("Maximum:"),
@@ -89,12 +112,12 @@ ui <- navbarPage("Data Analysis App",
                               ),
                               tags$li(
                                 strong("Minkowski:"),
-                                " A flexible option that can be adjusted with a power parameter for different distance sensitivities."
+                                " A flexible option adjustable via a power parameter."
                               )
                             ),
-                            p("The optimal number of clusters is suggested by the elbow method, which is displayed within the app."),
+                            p("The optimal number of clusters is suggested by the elbow method displayed in the app."),
                             h4("5. Complete Dataset"),
-                            p("The 'Complete Dataset' tab merges the newly created dataset with PCA dimensions and k-means clustering results. This combined view uses unique IDs to ensure every sample is consistently represented across all analyses.")
+                            p("The 'Complete Dataset' tab merges the newly created dataset with PCA dimensions and k-means clustering results, ensuring every sample is consistently represented.")
                           )
                           
                  ),
@@ -106,7 +129,7 @@ ui <- navbarPage("Data Analysis App",
                               fileInput("file", "Choose Excel or CSV File", accept = c(".xlsx", ".xls", ".csv")),
                               uiOutput("sheet_ui"),
                               numericInput("headerRow", "Row number for header", value = 1, min = 1),
-                              actionButton("loadData", "Load Data"),
+                              actionButton("loadData", "Load File", style="background-color: #ADD8E6; color: black;"),
                               tags$hr(),
                               h4("New Dataset Setup"),
                               uiOutput("id_col_ui"),
@@ -114,7 +137,7 @@ ui <- navbarPage("Data Analysis App",
                               uiOutput("select_vars_ui"),
                               uiOutput("rename_vars_ui"),
                               checkboxInput("remove_outliers", "Identify and Remove Outliers", value = FALSE),
-                              actionButton("createDb", "Create New Dataset")
+                              actionButton("createDb", "Generate Database", style="background-color: #008000; color: white;")
                             ),
                             mainPanel(
                               h4("Original Data Preview"),
@@ -131,10 +154,19 @@ ui <- navbarPage("Data Analysis App",
                  tabPanel("PCA",
                           sidebarLayout(
                             sidebarPanel(
-                              uiOutput("pca_vars_ui"),
-                              uiOutput("pca_axes_ui"),
-                              uiOutput("pca_group_filter_ui"),
-                              uiOutput("pca_group_colors_ui"),
+                              tabsetPanel(
+                                tabPanel("Values",
+                                         uiOutput("pca_vars_ui"),
+                                         uiOutput("pca_axes_ui"),
+                                         selectizeInput("pca_group_filter", "Select groups to include:", choices = NULL, multiple = TRUE),
+                                         checkboxInput("pca_hover_tooltip", "Enable Hover Tooltip", value = FALSE)
+                                ),
+                                tabPanel("Group Colors",
+                                         uiOutput("pca_group_colors_ui")
+                                )
+                              ),
+                              sliderInput("pca_point_size", "PCA Point Size:", min = 1, max = 10, value = 3),
+                              sliderInput("pca_point_alpha", "PCA Point Transparency:", min = 0, max = 1, value = 0.86, step = 0.01),
                               checkboxInput("show_id_labels", "Show ID Labels", value = FALSE),
                               hr(),
                               h4("Axis Formatting Options"),
@@ -152,8 +184,11 @@ ui <- navbarPage("Data Analysis App",
                               downloadButton("download_corr_plot", "Download Correlation Plot")
                             ),
                             mainPanel(
+                              p("IF ERROR OCCURS CLICK GROUPS COLOURS"),
                               tabsetPanel(
-                                tabPanel("PCA Analysis", plotOutput("pcaCombinedPlot", height="900px")),
+                                tabPanel("PCA Analysis", 
+                                         uiOutput("pcaPlotUI")
+                                ),
                                 tabPanel("Contributions", plotOutput("pcaContributions")),
                                 tabPanel("Variable Correlation", plotOutput("variableCorrelation", height="600px")),
                                 tabPanel("Sample-Variable Correlation", plotlyOutput("sampleCorrelation", height="1600px")),
@@ -167,13 +202,24 @@ ui <- navbarPage("Data Analysis App",
                  tabPanel("Violin Plot",
                           sidebarLayout(
                             sidebarPanel(
-                              uiOutput("violin_var_ui"),
-                              uiOutput("violin_group_filter_ui"),
-                              uiOutput("violin_group_colors_ui"),
+                              tabsetPanel(
+                                tabPanel("Values",
+                                         uiOutput("violin_var_ui"),
+                                         selectizeInput("violin_group_filter", "Select groups to display:", choices = NULL, multiple = TRUE)
+                                ),
+                                tabPanel("Group Colors",
+                                         uiOutput("violin_group_colors_ui")
+                                )
+                              ),
                               sliderInput("violin_alpha", "Violin Plot Transparency:", min=0, max=1, value=0.8, step=0.1),
                               checkboxInput("show_violin", "Show Violin Plot", value=TRUE),
                               checkboxInput("show_boxplot", "Show Box Plot", value=TRUE),
                               checkboxInput("show_points", "Show Data Points", value=TRUE),
+                              hr(),
+                              radioButtons("scale_type", "Select Scale Type for Violin/Box Plot:",
+                                           choices = c("Normal" = "normal", "Logarithmic" = "logarithmic", "Exponential" = "exponential"),
+                                           selected = "normal"),
+                              helpText("Guidance: Use [logarithmic scaling](https://en.wikipedia.org/wiki/Logarithm) when data spans several orders of magnitude, and [exponential scaling](https://en.wikipedia.org/wiki/Exponential_function) to highlight exponential growth patterns."),
                               hr(),
                               h4("Axis Formatting Options"),
                               numericInput("violin_axis_title_size", "Axis Title Size:", value=14, min=8),
@@ -188,6 +234,7 @@ ui <- navbarPage("Data Analysis App",
                               downloadButton("download_violin_plot", "Download Violin Plot")
                             ),
                             mainPanel(
+                              p("IF ERROR OCCURS CLICK GROUPS COLOURS"),
                               plotOutput("violinPlot", height="600px")
                             )
                           )
@@ -205,8 +252,7 @@ ui <- navbarPage("Data Analysis App",
                                 condition = "input.distance_method == 'minkowski'",
                                 numericInput("minkowski_power", "Minkowski Power:", value=2, min=1)
                               ),
-                              sliderInput("max_clusters", "Maximum number of clusters to test:",
-                                          min=2, max=15, value=10),
+                              sliderInput("max_clusters", "Maximum number of clusters to test:", min=2, max=15, value=10),
                               actionButton("run_elbow", "Run Elbow Analysis", class="btn-primary"),
                               hr(),
                               numericInput("selected_k", "Number of clusters (k):", value=3, min=2),
@@ -218,8 +264,7 @@ ui <- navbarPage("Data Analysis App",
                               numericInput("kmeans_axis_title_size", "Axis Title Size:", value=14, min=8),
                               numericInput("kmeans_axis_text_size", "Axis Text Size:", value=12, min=8),
                               hr(),
-                              selectInput("kmeans_download_format", "Download plot format:",
-                                          choices = c("pdf", "jpeg", "tiff"), selected="pdf"),
+                              selectInput("kmeans_download_format", "Download plot format:", choices = c("pdf", "jpeg", "tiff"), selected="pdf"),
                               numericInput("kmeans_download_width", "Plot width (inches):", value=10, min=1),
                               numericInput("kmeans_download_height", "Plot height (inches):", value=8, min=1),
                               numericInput("kmeans_download_dpi", "Plot resolution (DPI):", value=300, min=72),
@@ -315,11 +360,20 @@ server <- function(input, output, session) {
     })
   })
   
-  # New Dataset Creation (with optional outlier removal)
+  # New Dataset Creation (with optional outlier removal and numeric conversion)
   newDatabase <- eventReactive(input$createDb, {
     req(dataImport(), input$id_col, input$group_col, input$selected_vars)
     df <- dataImport()
     newdf <- dplyr::select(df, all_of(c(input$id_col, input$group_col, input$selected_vars)))
+    
+    # Convert selected variables to numeric. This will coerce formulas or blank spaces to NA.
+    for(var in input$selected_vars) {
+      newdf[[var]] <- suppressWarnings(as.numeric(newdf[[var]]))
+    }
+    
+    # Remove rows that have NA in any of the selected variable columns
+    newdf <- newdf %>% dplyr::filter(complete.cases(across(all_of(input$selected_vars))))
+    
     new_names <- sapply(input$selected_vars, function(var) {
       new_name <- input[[paste0("newname_", var)]]
       ifelse(is.null(new_name), var, new_name)
@@ -356,16 +410,23 @@ server <- function(input, output, session) {
     selectizeInput("pca_vars", "Select variables for PCA:", choices = num_vars, multiple = TRUE)
   })
   
-  output$pca_group_filter_ui <- renderUI({
+  observe({
     req(newDatabase())
     groups <- sort(unique(newDatabase()[[input$group_col]]))
-    checkboxGroupInput("pca_group_filter", "Select groups to include:", choices = groups, selected = groups)
+    updateSelectizeInput(session, "pca_group_filter", choices = groups, selected = groups, server = TRUE)
   })
   
   output$pca_group_colors_ui <- renderUI({
     req(input$pca_group_filter)
-    lapply(input$pca_group_filter, function(g) {
-      colourInput(paste0("pca_color_", make.names(g)), paste("Color for", g), value = "#56B4E9")
+    n <- length(input$pca_group_filter)
+    if(n <= 9) {
+      default_colors <- RColorBrewer::brewer.pal(n, "Set1")
+    } else {
+      default_colors <- grDevices::rainbow(n)
+    }
+    lapply(seq_along(input$pca_group_filter), function(i) {
+      g <- input$pca_group_filter[i]
+      colourInput(paste0("pca_color_", make.names(g)), paste("Color for", g), value = default_colors[i])
     })
   })
   
@@ -397,30 +458,44 @@ server <- function(input, output, session) {
     )
   })
   
+  # Render PCA plot either as a static grid (individuals and loadings) or interactive if hover enabled
+  output$pcaPlotUI <- renderUI({
+    if(isTRUE(input$pca_hover_tooltip)){
+      plotlyOutput("pcaInteractivePlot", height="900px")
+    } else {
+      plotOutput("pcaCombinedPlot", height="900px")
+    }
+  })
+  
   output$pcaCombinedPlot <- renderPlot({
     req(filtered_data(), pcaResult(), input$pca_xaxis, input$pca_yaxis)
     dat_filt <- filtered_data()
-    group_factor <- factor(dat_filt[[input$group_col]], levels = input$pca_group_filter)
-    color_vector <- vapply(input$pca_group_filter, function(g) { input[[paste0("pca_color_", make.names(g))]] }, FUN.VALUE = "")
+    # Removed forced factor conversion; use all unique group values
+    group_vector <- dat_filt[[input$group_col]]
+    color_vector <- vapply(input$pca_group_filter, function(g) {
+      input[[paste0("pca_color_", make.names(g))]]
+    }, FUN.VALUE = "")
     xAxis <- as.numeric(gsub("PC", "", input$pca_xaxis))
     yAxis <- as.numeric(gsub("PC", "", input$pca_yaxis))
     pca_ids <- rownames(pcaResult()$ind$coord)
     plot_df <- data.frame(
       x = pcaResult()$ind$coord[, xAxis],
       y = pcaResult()$ind$coord[, yAxis],
-      Group = group_factor[match(pca_ids, dat_filt$ID)],
+      Group = group_vector[match(pca_ids, dat_filt$ID)],
       ID = pca_ids
     )
     p1 <- ggplot2::ggplot(plot_df, ggplot2::aes(x=x, y=y, color=Group)) +
-      ggplot2::geom_point(size=3, alpha=0.86) +
+      ggplot2::geom_point(size=input$pca_point_size, alpha=input$pca_point_alpha) +
       ggplot2::scale_color_manual(values = setNames(color_vector, input$pca_group_filter)) +
       ggplot2::labs(title="PCA Individuals Plot",
-                    x=paste0(input$pca_xaxis, " (", round(pcaResult()$eig[xAxis, 2], 1), "%)"),
-                    y=paste0(input$pca_yaxis, " (", round(pcaResult()$eig[yAxis, 2], 1), "%)")) +
+                    x=paste0(input$pca_xaxis, " (", round(pcaResult()$eig[xAxis,2], 1), "%)"),
+                    y=paste0(input$pca_yaxis, " (", round(pcaResult()$eig[yAxis,2], 1), "%)")) +
       ggplot2::theme_minimal() +
       ggplot2::theme(axis.title=ggplot2::element_text(size=input$pca_axis_title_size),
                      axis.text=ggplot2::element_text(size=input$pca_axis_text_size))
-    if(input$show_id_labels) { p1 <- p1 + ggplot2::geom_text(ggplot2::aes(label=ID), hjust=-0.2, vjust=0.5) }
+    if(input$show_id_labels) { 
+      p1 <- p1 + ggplot2::geom_text(ggplot2::aes(label=ID), hjust=-0.2, vjust=0.5) 
+    }
     loadings_coords <- as.data.frame(pcaResult()$var$coord)
     selected_loadings <- loadings_coords[, c(xAxis, yAxis)]
     colnames(selected_loadings) <- c("x", "y")
@@ -435,6 +510,39 @@ server <- function(input, output, session) {
       ggplot2::theme(axis.title=ggplot2::element_text(size=input$pca_axis_title_size),
                      axis.text=ggplot2::element_text(size=input$pca_axis_text_size))
     gridExtra::grid.arrange(p1, p2, ncol=1, heights=c(3,2))
+  })
+  
+  output$pcaInteractivePlot <- renderPlotly({
+    req(filtered_data(), pcaResult(), input$pca_xaxis, input$pca_yaxis)
+    dat_filt <- filtered_data()
+    # Use the grouping column directly so every unique group is shown
+    group_vector <- dat_filt[[input$group_col]]
+    color_vector <- vapply(input$pca_group_filter, function(g) {
+      input[[paste0("pca_color_", make.names(g))]]
+    }, FUN.VALUE = "")
+    xAxis <- as.numeric(gsub("PC", "", input$pca_xaxis))
+    yAxis <- as.numeric(gsub("PC", "", input$pca_yaxis))
+    pca_ids <- rownames(pcaResult()$ind$coord)
+    plot_df <- data.frame(
+      x = pcaResult()$ind$coord[, xAxis],
+      y = pcaResult()$ind$coord[, yAxis],
+      Group = group_vector[match(pca_ids, dat_filt$ID)],
+      ID = pca_ids,
+      tooltip = paste("ID:", pca_ids, "<br>Group:", group_vector[match(pca_ids, dat_filt$ID)])
+    )
+    p <- ggplot2::ggplot(plot_df, ggplot2::aes(x=x, y=y, color=Group, text=tooltip)) +
+      ggplot2::geom_point(size=input$pca_point_size, alpha=input$pca_point_alpha) +
+      ggplot2::scale_color_manual(values = setNames(color_vector, input$pca_group_filter)) +
+      ggplot2::labs(title="PCA Individuals Plot",
+                    x=paste0(input$pca_xaxis, " (", round(pcaResult()$eig[xAxis,2],1), "%)"),
+                    y=paste0(input$pca_yaxis, " (", round(pcaResult()$eig[yAxis,2],1), "%)")) +
+      ggplot2::theme_minimal() +
+      ggplot2::theme(axis.title=ggplot2::element_text(size=input$pca_axis_title_size),
+                     axis.text=ggplot2::element_text(size=input$pca_axis_text_size))
+    if(input$show_id_labels) {
+      p <- p + ggplot2::geom_text(ggplot2::aes(label=ID), hjust=-0.2, vjust=0.5)
+    }
+    ggplotly(p, tooltip="text")
   })
   
   output$pcaContributions <- renderPlot({
@@ -487,18 +595,18 @@ server <- function(input, output, session) {
                res=input$pca_download_dpi, compression="lzw")
         }
         dat_filt <- filtered_data()
-        group_factor <- factor(dat_filt[[input$group_col]], levels=input$pca_group_filter)
+        group_vector <- dat_filt[[input$group_col]]
         color_vector <- vapply(input$pca_group_filter, function(g){ input[[paste0("pca_color_", make.names(g))]] }, FUN.VALUE = "")
         xAxis <- as.numeric(gsub("PC", "", input$pca_xaxis))
         yAxis <- as.numeric(gsub("PC", "", input$pca_yaxis))
         plot_df <- data.frame(
           x = pcaResult()$ind$coord[, xAxis],
           y = pcaResult()$ind$coord[, yAxis],
-          Group = group_factor[match(rownames(pcaResult()$ind$coord), dat_filt$ID)],
+          Group = group_vector[match(rownames(pcaResult()$ind$coord), dat_filt$ID)],
           ID = rownames(pcaResult()$ind$coord)
         )
         p1 <- ggplot2::ggplot(plot_df, ggplot2::aes(x=x, y=y, color=Group)) +
-          ggplot2::geom_point(size=3, alpha=0.86) +
+          ggplot2::geom_point(size=input$pca_point_size, alpha=input$pca_point_alpha) +
           ggplot2::scale_color_manual(values = setNames(color_vector, input$pca_group_filter)) +
           ggplot2::labs(title="PCA Individuals Plot",
                         x=paste0(input$pca_xaxis, " (", round(pcaResult()$eig[xAxis,2],1), "%)"),
@@ -608,31 +716,49 @@ server <- function(input, output, session) {
     selectInput("violin_var", "Select variable for Violin Plot:", choices = num_vars)
   })
   
-  output$violin_group_filter_ui <- renderUI({
+  observe({
     req(newDatabase())
     groups <- sort(unique(newDatabase()[[input$group_col]]))
-    checkboxGroupInput("violin_group_filter", "Select groups to display:", choices = groups, selected = groups)
+    updateSelectizeInput(session, "violin_group_filter", choices = groups, selected = groups, server = TRUE)
   })
   
   output$violin_group_colors_ui <- renderUI({
     req(input$violin_group_filter)
-    lapply(input$violin_group_filter, function(g) {
-      colourInput(paste0("violin_color_", make.names(g)), paste("Color for", g), value = "#56B4E9")
+    n <- length(input$violin_group_filter)
+    if(n <= 9) {
+      default_colors <- RColorBrewer::brewer.pal(n, "Set1")
+    } else {
+      default_colors <- grDevices::rainbow(n)
+    }
+    lapply(seq_along(input$violin_group_filter), function(i) {
+      g <- input$violin_group_filter[i]
+      colourInput(paste0("violin_color_", make.names(g)), paste("Color for", g), value = default_colors[i])
     })
   })
   
   output$violinPlot <- renderPlot({
-    req(newDatabase(), input$violin_var, input$violin_group_filter)
+    req(newDatabase(), input$violin_var, input$violin_group_filter, input$scale_type)
     dat <- newDatabase()
     dat_filtered <- dat[dat[[input$group_col]] %in% input$violin_group_filter, ]
-    dat_filtered[[input$group_col]] <- factor(dat_filtered[[input$group_col]], levels=input$violin_group_filter)
+    # Remove forced factor levels so all unique groups are represented
+    dat_filtered[[input$group_col]] <- factor(dat_filtered[[input$group_col]])
+    # Transformation based on selected scale type
+    selected_values <- dat_filtered[[input$violin_var]]
+    if (input$scale_type == "logarithmic") {
+      transformed_values <- log10(selected_values)
+    } else if (input$scale_type == "exponential") {
+      transformed_values <- exp(selected_values)
+    } else {
+      transformed_values <- selected_values
+    }
+    dat_filtered$transformed <- transformed_values
     color_vector <- vapply(input$violin_group_filter,
                            function(g) { input[[paste0("violin_color_", make.names(g))]] },
                            FUN.VALUE = "")
-    p <- ggplot2::ggplot(dat_filtered, ggplot2::aes(x=.data[[input$group_col]], y=.data[[input$violin_var]], fill=.data[[input$group_col]]))
+    p <- ggplot2::ggplot(dat_filtered, ggplot2::aes(x=.data[[input$group_col]], y=transformed, fill=.data[[input$group_col]]))
     if(input$show_violin) { p <- p + ggplot2::geom_violin(alpha=input$violin_alpha, scale="width") }
     p <- p + ggplot2::scale_fill_manual(values=setNames(color_vector, input$violin_group_filter)) +
-      ggplot2::labs(x=input$group_col, y=input$violin_var, fill=input$group_col) +
+      ggplot2::labs(x=input$group_col, y=paste(input$violin_var, "(", input$scale_type, "scale)"), fill=input$group_col) +
       ggplot2::theme_minimal() +
       ggplot2::theme(axis.title=ggplot2::element_text(size=input$violin_axis_title_size),
                      axis.text=ggplot2::element_text(size=input$violin_axis_text_size),
@@ -657,14 +783,23 @@ server <- function(input, output, session) {
         }
         dat <- newDatabase()
         dat_filtered <- dat[dat[[input$group_col]] %in% input$violin_group_filter, ]
-        dat_filtered[[input$group_col]] <- factor(dat_filtered[[input$group_col]], levels=input$violin_group_filter)
+        dat_filtered[[input$group_col]] <- factor(dat_filtered[[input$group_col]])
+        selected_values <- dat_filtered[[input$violin_var]]
+        if (input$scale_type == "logarithmic") {
+          transformed_values <- log10(selected_values)
+        } else if (input$scale_type == "exponential") {
+          transformed_values <- exp(selected_values)
+        } else {
+          transformed_values <- selected_values
+        }
+        dat_filtered$transformed <- transformed_values
         color_vector <- vapply(input$violin_group_filter,
                                function(g) { input[[paste0("violin_color_", make.names(g))]] },
                                FUN.VALUE = "")
-        p <- ggplot2::ggplot(dat_filtered, ggplot2::aes(x=.data[[input$group_col]], y=.data[[input$violin_var]], fill=.data[[input$group_col]]))
+        p <- ggplot2::ggplot(dat_filtered, ggplot2::aes(x=.data[[input$group_col]], y=transformed, fill=.data[[input$group_col]]))
         if(input$show_violin) { p <- p + ggplot2::geom_violin(alpha=input$violin_alpha, scale="width") }
         p <- p + ggplot2::scale_fill_manual(values=setNames(color_vector, input$violin_group_filter)) +
-          ggplot2::labs(x=input$group_col, y=input$violin_var, fill=input$group_col) +
+          ggplot2::labs(x=input$group_col, y=paste(input$violin_var, "(", input$scale_type, "scale)"), fill=input$group_col) +
           ggplot2::theme_minimal() +
           ggplot2::theme(axis.title=ggplot2::element_text(size=input$violin_axis_title_size),
                          axis.text=ggplot2::element_text(size=input$violin_axis_text_size),
